@@ -160,47 +160,42 @@ def process_video_file(video_path, session_id, status_queue):
     
 def process_audio_file(audio_path, session_id, status_queue):
     """
-    Process audio files using the original approach
+    Process audio files using a simplified approach without chunking
     """
     try:
-        wav_path = audio_path.replace(os.path.splitext(audio_path)[1], '.wav')
+        # Convert to WAV if needed (but keep original file)
+        wav_path = f"uploads/{session_id}_audio.wav"
+        status_queue.put({"status": "processing", "message": "Đang xử lý audio..."})
         convert_to_wav(audio_path, wav_path)
 
-        status_queue.put({"status": "processing", "message": "Đang chia đoạn audio..."})
-        chunk_paths = split_audio_into_chunks(wav_path, chunk_length=4)
-
-        status_queue.put({"status": "processing", "message": "Đang nhận dạng từng đoạn..."})
-        all_chunks = []
-        start_time = 0
-
-        for i, chunk_path in enumerate(chunk_paths):
-            result = pipe(chunk_path, return_timestamps=True)
-            text = result.get('text', '').strip()
-            if text:
-                all_chunks.append({
-                    "timestamp": (start_time, start_time + 4),
-                    "text": text
-                })
-            start_time += 4
-            os.remove(chunk_path)
-
+        # Use the pipe directly on the entire audio file
+        status_queue.put({"status": "processing", "message": "Đang nhận dạng giọng nói..."})
+        result = pipe(wav_path, return_timestamps=True)
+        
+        # Generate SRT content
+        srt_content = generate_srt_improved({
+            'chunks': [{'timestamp': chunk['timestamp'], 'text': chunk['text']} 
+                      for chunk in result.get('chunks', [])]
+        })
+        
         # Save results
         with threading.Lock():
             transcription_results[session_id] = {
-                "text": "\n".join([c["text"] for c in all_chunks]),
+                "text": result.get('text', ''),
+                "srt": srt_content,
                 "video_path": None,
                 "original_video": None
             }
 
-        # Cleanup
+        # Cleanup temporary files only
         os.remove(wav_path)
-        os.remove(audio_path)
         
         return True
 
     except Exception as e:
         print(f"Error in audio processing: {str(e)}")
         return False
+
 
 def format_srt_timestamp(seconds):
     """
@@ -329,6 +324,18 @@ def _format_timecode(seconds):
 def index():
     return render_template('2index.html')
 
+@app.route('/original_video/<session_id>')
+def original_video(session_id):
+    result = transcription_results.get(session_id)
+    if result and result.get('original_video'):
+        return send_file(
+            result['original_video'],
+            mimetype="video/mp4",
+            as_attachment=True,
+            download_name="original_video.mp4"
+        )
+    return "Original video not found", 404
+
 @app.route('/download_video/<session_id>')
 def download_video(session_id):
     result = transcription_results.get(session_id)
@@ -430,21 +437,21 @@ def download_text(session_id):
 @app.route('/download_srt/<session_id>')
 def download_srt(session_id):
     result = transcription_results.get(session_id)
-    if result:
+    if result and result.get('srt'):
         srt_content = result['srt']
 
-        # Lưu file với encoding UTF-8 
+        # Save file with encoding UTF-8 
         srt_path = f"uploads/{session_id}.srt"
         with open(srt_path, "w", encoding="utf-8") as f:
             f.write(srt_content)
 
-            srt_path,
         return send_file(
+            srt_path,
             mimetype="text/plain",
             as_attachment=True,
             download_name="subtitles.srt"
         )
     return "No completed transcription found", 404
-
+    
 if __name__ == '__main__':
     app.run(debug=True, threaded=True)

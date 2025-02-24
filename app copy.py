@@ -13,14 +13,13 @@ import subprocess
 import webvtt
 import numpy as np
 from queue import Empty
-# Global dictionary to store transcription results
+
 transcription_results = {}
 transcription_locks = {}
 
 app = Flask(__name__)
 
-# Thay model_path bằng đường dẫn của bạn
-MODEL_PATH = "vi-whisper-large-v3-turbo-v1"
+MODEL_PATH = "ASR"
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
@@ -87,7 +86,7 @@ def process_video_file(video_path, session_id, status_queue):
         
         # Split audio into smaller chunks (5 seconds each)
         audio = AudioSegment.from_wav(wav_path)
-        chunk_length = 5000  # 5 seconds in milliseconds
+        chunk_length = 5000  
         chunks = [audio[i:i+chunk_length] for i in range(0, len(audio), chunk_length)]
         total_chunks = len(chunks)
         
@@ -158,7 +157,7 @@ def process_video_file(video_path, session_id, status_queue):
     except Exception as e:
         print(f"Error in video processing: {str(e)}")
         return False
-        
+    
 def process_audio_file(audio_path, session_id, status_queue):
     """
     Process audio files using the original approach
@@ -239,7 +238,7 @@ def embed_subtitles(video_path, srt_path, output_path):
         command = [
             'ffmpeg',
             '-i', video_path,
-            '-vf', f'subtitles={srt_path}:force_style=\'FontSize=24,Alignment=2\'',
+            '-vf', f'subtitles={srt_path}:force_style=\'FontSize=13,Alignment=2\'',
             '-c:a', 'copy',
             output_path,
             '-y'
@@ -434,7 +433,7 @@ def download_srt(session_id):
     if result:
         srt_content = result['srt']
 
-        # Lưu file với encoding UTF-8 không BOM
+        # Lưu file với encoding UTF-8 
         srt_path = f"uploads/{session_id}.srt"
         with open(srt_path, "w", encoding="utf-8") as f:
             f.write(srt_content)
