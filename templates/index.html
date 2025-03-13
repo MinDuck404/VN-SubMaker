@@ -85,6 +85,38 @@
         video.has-source {
             display: block; /* Show when has source */
         }
+        /* New styles for audio player */
+        .audio-player {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 10px;
+            margin-bottom: 15px;
+        }
+        .audio-player audio {
+            width: 100%;
+        }
+        .audio-control {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .audio-control:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(1.05);
+        }
+        .audio-control:active {
+            transform: scale(0.95);
+        }
     </style>
 </head>
 <body>
@@ -98,7 +130,7 @@
         <form id="transcriptionForm" class="mt-4">
             <div class="mb-3">
                 <label class="form-label">Audio/Video File (MP3/WAV/MP4):</label>
-                <input type="file" class="form-control" name="audio" accept=".mp3,.wav,.mp4" required>
+                <input type="file" class="form-control" name="audio" id="audioFileInput" accept=".mp3,.wav,.mp4" required>
             </div>
             <button type="submit" class="btn btn-success">Transcribe</button>
         </form>
@@ -136,6 +168,25 @@
             <!-- Transcription Text Tab -->
             <div class="tab-pane fade show active" id="transcription" role="tabpanel">
                 <div id="transcriptionResult" style="display: none;">
+                    <!-- New Audio Player -->
+                    <div class="audio-player mb-4">
+                        <h5>Play Audio</h5>
+                        <button id="playAudioBtn" class="audio-control mb-2">
+                            <i class="fas fa-play" id="playIcon"></i>
+                        </button>
+                        <audio id="audioPlayer" style="display: none;">
+                            <source id="audioSource" src="" type="audio/mpeg">
+                            Your browser does not support the audio element.
+                        </audio>
+                        <div id="audioProgressBar" class="progress mt-2" style="height: 5px;">
+                            <div class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <div class="d-flex justify-content-between mt-1">
+                            <small id="currentTime">0:00</small>
+                            <small id="duration">0:00</small>
+                        </div>
+                    </div>
+                    
                     <h4>Recognition Result:</h4>
                     <pre id="resultText"></pre>
                     <button id="downloadTextBtn" class="btn btn-success mt-3">Download Text</button>
@@ -172,6 +223,56 @@
     <script>
         let currentSessionId = null;
         let eventSource = null;
+        let audioPlayer = null;
+        let isPlaying = false;
+        let uploadedFile = null;
+
+        // Initialize audio player
+        function initAudioPlayer() {
+            audioPlayer = document.getElementById('audioPlayer');
+            const playBtn = document.getElementById('playAudioBtn');
+            const playIcon = document.getElementById('playIcon');
+            const progressBar = document.querySelector('#audioProgressBar .progress-bar');
+            const currentTimeEl = document.getElementById('currentTime');
+            const durationEl = document.getElementById('duration');
+            
+            // Play/pause toggle
+            playBtn.addEventListener('click', () => {
+                if (isPlaying) {
+                    audioPlayer.pause();
+                    playIcon.className = 'fas fa-play';
+                } else {
+                    audioPlayer.play();
+                    playIcon.className = 'fas fa-pause';
+                }
+                isPlaying = !isPlaying;
+            });
+            
+            // Update progress bar
+            audioPlayer.addEventListener('timeupdate', () => {
+                const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
+                progressBar.style.width = progress + '%';
+                
+                // Update current time
+                const minutes = Math.floor(audioPlayer.currentTime / 60);
+                const seconds = Math.floor(audioPlayer.currentTime % 60);
+                currentTimeEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            });
+            
+            // Set duration when metadata is loaded
+            audioPlayer.addEventListener('loadedmetadata', () => {
+                const minutes = Math.floor(audioPlayer.duration / 60);
+                const seconds = Math.floor(audioPlayer.duration % 60);
+                durationEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            });
+            
+            // Reset when audio ends
+            audioPlayer.addEventListener('ended', () => {
+                isPlaying = false;
+                playIcon.className = 'fas fa-play';
+                progressBar.style.width = '0%';
+            });
+        }
 
         // Add function to update video sources
         function updateVideoSources(sessionId) {
@@ -264,6 +365,11 @@
                         resultText.textContent = data.text;
                         resultDiv.style.display = 'block';
                         
+                        // Set up audio player if file is available
+                        if (uploadedFile) {
+                            setupAudioPlayer(uploadedFile);
+                        }
+                        
                         if (data.has_video) {
                             downloadVideoBtn.style.display = 'inline-block';
                             updateVideoSources(sessionId);
@@ -307,6 +413,36 @@
 
             connect();
         }
+
+        // Function to set up audio player with the uploaded file
+        function setupAudioPlayer(file) {
+            const audioPlayer = document.getElementById('audioPlayer');
+            const audioSource = document.getElementById('audioSource');
+            
+            // Create object URL for the uploaded file
+            const objectUrl = URL.createObjectURL(file);
+            
+            // Set as audio source
+            audioSource.src = objectUrl;
+            audioPlayer.load();
+            
+            // Show audio player controls
+            document.querySelector('.audio-player').style.display = 'block';
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize audio player
+            initAudioPlayer();
+            
+            // Hide audio player initially
+            document.querySelector('.audio-player').style.display = 'none';
+        });
+
+        document.getElementById('audioFileInput').addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                uploadedFile = e.target.files[0];
+            }
+        });
 
         document.getElementById('transcriptionForm').addEventListener('submit', async (e) => {
             e.preventDefault();
