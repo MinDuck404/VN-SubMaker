@@ -5,7 +5,62 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
-        /* Previous styles remain the same */
+        /* Toggle Switch Styles */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-label {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 60px;
+            height: 34px;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 34px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .toggle-label::before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+
+        .toggle-switch input:checked + .toggle-label {
+            background-color: #2196F3;
+        }
+
+        .toggle-switch input:checked + .toggle-label::before {
+            transform: translateX(26px);
+        }
+
+        .toggle-text {
+            position: absolute;
+            top: 50%;
+            left: 70px;
+            transform: translateY(-50%);
+            color: white;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+        /* End styles for toggle switch */
         body {
             background: linear-gradient(to right, #667eea, #764ba2);
             color: white;
@@ -135,13 +190,19 @@
             <!-- Thêm phần ghi âm -->
             <div class="mb-3">
                 <label class="form-label">Or Record Your Voice:</label>
-                <div class="d-flex justify-content-center gap-3">
+                <div class="d-flex justify-content-center gap-3 align-items-center">
                     <button type="button" id="startRecording" class="btn btn-primary">
                         <i class="fas fa-microphone"></i> Start Recording
                     </button>
                     <button type="button" id="stopRecording" class="btn btn-danger" disabled>
                         <i class="fas fa-stop"></i> Stop Recording
                     </button>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="toggleRealTime">
+                        <label for="toggleRealTime" class="toggle-label">
+                            <span class="toggle-text">Real-Time Subtitles</span>
+                        </label>
+                    </div>
                 </div>
                 <div id="recordingStatus" class="mt-2" style="display: none;">
                     <small>Recording... <span id="recordingTime">0:00</span></small>
@@ -183,7 +244,7 @@
             <!-- Transcription Text Tab -->
             <div class="tab-pane fade show active" id="transcription" role="tabpanel">
                 <div id="transcriptionResult" style="display: none;">
-                    <!-- New Audio Player -->
+                    <!-- Audio Player -->
                     <div class="audio-player mb-4">
                         <h5>Play Audio</h5>
                         <button id="playAudioBtn" class="audio-control mb-2">
@@ -205,6 +266,7 @@
                     <h4>Recognition Result:</h4>
                     <pre id="resultText"></pre>
                     <button id="downloadTextBtn" class="btn btn-success mt-3">Download Text</button>
+                    <button id="downloadAudioBtn" class="btn btn-primary mt-3" style="display: none;">Download Audio</button> <!-- Nút mới -->
                 </div>
             </div>
 
@@ -244,7 +306,10 @@
         let mediaRecorder = null;
         let audioChunks = [];
         let recordingStartTime = null;
-
+        let realTimeEnabled = false;
+        let recognition = null;
+        let accumulatedText = ''; // Biến để tích lũy văn bản real-time
+    
         // Initialize audio player
         function initAudioPlayer() {
             audioPlayer = document.getElementById('audioPlayer');
@@ -253,8 +318,7 @@
             const progressBar = document.querySelector('#audioProgressBar .progress-bar');
             const currentTimeEl = document.getElementById('currentTime');
             const durationEl = document.getElementById('duration');
-            
-            // Play/pause toggle
+    
             playBtn.addEventListener('click', () => {
                 if (isPlaying) {
                     audioPlayer.pause();
@@ -265,45 +329,55 @@
                 }
                 isPlaying = !isPlaying;
             });
-            
-            // Update progress bar
+    
             audioPlayer.addEventListener('timeupdate', () => {
                 const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
                 progressBar.style.width = progress + '%';
-                
-                // Update current time
                 const minutes = Math.floor(audioPlayer.currentTime / 60);
                 const seconds = Math.floor(audioPlayer.currentTime % 60);
                 currentTimeEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
             });
-            
-            // Set duration when metadata is loaded
+    
             audioPlayer.addEventListener('loadedmetadata', () => {
                 const minutes = Math.floor(audioPlayer.duration / 60);
                 const seconds = Math.floor(audioPlayer.duration % 60);
                 durationEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
             });
-            
-            // Reset when audio ends
+    
             audioPlayer.addEventListener('ended', () => {
                 isPlaying = false;
                 playIcon.className = 'fas fa-play';
                 progressBar.style.width = '0%';
             });
         }
-
-        async function initRecording() {
+        
+        let recordedAudioUrl = null;
+        // Initialize recording and real-time subtitles
+        function initRecording() {
             const startBtn = document.getElementById('startRecording');
             const stopBtn = document.getElementById('stopRecording');
+            const toggleRealTimeSwitch = document.getElementById('toggleRealTime');
             const recordingStatus = document.getElementById('recordingStatus');
             const recordingTime = document.getElementById('recordingTime');
             const submitBtn = document.getElementById('submitBtn');
+            const resultDiv = document.getElementById('transcriptionResult');
+            const resultText = document.getElementById('resultText');
+            const downloadAudioBtn = document.getElementById('downloadAudioBtn'); // Thêm nút tải audio
             let stream = null;
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                toggleRealTimeSwitch.disabled = true;
+                console.warn('Web Speech API is not supported in this browser.');
+            }
 
             function resetRecordingState() {
                 if (stream) {
-                    stream.getTracks().forEach(track => track.stop()); // Dừng tất cả các track
+                    stream.getTracks().forEach(track => track.stop());
                     stream = null;
+                }
+                if (recognition && recognition.state !== 'inactive') {
+                    recognition.stop();
                 }
                 mediaRecorder = null;
                 audioChunks = [];
@@ -311,33 +385,65 @@
                 recordingStatus.style.display = 'none';
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
-                submitBtn.disabled = true;
+                submitBtn.disabled = !uploadedFile;
             }
-            
-            async function setupRecorder() {
+
+            async function setupRecorderAndRecognition() {
                 try {
                     if (!stream) {
                         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     }
+
                     mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-
-                    mediaRecorder.ondataavailable = (event) => {
-                        audioChunks.push(event.data);
-                    };
-
-                    mediaRecorder.onstop = async () => {
+                    mediaRecorder.ondataavailable = (event) => audioChunks.push(event.data);
+                    mediaRecorder.onstop = () => {
                         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                         uploadedFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
-                        
-                        // Reset trạng thái sau khi ghi âm xong
+                        recordedAudioUrl = URL.createObjectURL(audioBlob); // Tạo URL tạm thời cho file âm thanh
+                        setupAudioPlayer(uploadedFile); // Cập nhật audio player
+                        downloadAudioBtn.style.display = 'inline-block'; // Hiển thị nút tải audio
                         resetRecordingState();
-
-                        // Kích hoạt nút submit
-                        submitBtn.disabled = false;
-
-                        // Tự động submit form nếu muốn xử lý ngay
-                        document.getElementById('transcriptionForm').dispatchEvent(new Event('submit'));
+                        if (!realTimeEnabled) {
+                            submitBtn.disabled = false;
+                            document.getElementById('transcriptionForm').dispatchEvent(new Event('submit'));
+                        }
                     };
+
+                    if (realTimeEnabled && SpeechRecognition) {
+                        recognition = new SpeechRecognition();
+                        recognition.continuous = true;
+                        recognition.interimResults = true;
+                        recognition.lang = 'vi-VN';
+
+                        recognition.onresult = (event) => {
+                            let interimTranscript = '';
+                            let finalTranscript = '';
+                            for (let i = event.resultIndex; i < event.results.length; i++) {
+                                const transcript = event.results[i][0].transcript;
+                                if (event.results[i].isFinal) {
+                                    finalTranscript += transcript + ' ';
+                                } else {
+                                    interimTranscript += transcript;
+                                }
+                            }
+                            accumulatedText += finalTranscript;
+                            resultText.innerHTML = accumulatedText + '<span style="color: #aaa">' + interimTranscript + '</span>';
+                            resultDiv.style.display = 'block';
+                            document.querySelector('#transcription-tab').click();
+                        };
+
+                        recognition.onerror = (event) => {
+                            console.error('Speech recognition error:', event.error);
+                            resultText.textContent = accumulatedText + ' [Error: ' + event.error + ']';
+                            resultDiv.style.display = 'block';
+                        };
+
+                        recognition.onend = () => {
+                            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                                recognition.start();
+                            }
+                        };
+                    }
                 } catch (err) {
                     console.error('Error accessing microphone:', err);
                     alert('Không thể truy cập microphone. Vui lòng kiểm tra quyền truy cập.');
@@ -345,11 +451,25 @@
                 }
             }
 
+            toggleRealTimeSwitch.addEventListener('change', () => {
+                realTimeEnabled = toggleRealTimeSwitch.checked;
+                submitBtn.disabled = realTimeEnabled || !!uploadedFile;
+            });
+            // downloadAudioBtn.addEventListener('click', () => {
+            //     if (currentSessionId) {
+            //         window.location.href = `/download_audio/${currentSessionId}`;
+            //     }
+            // });
             startBtn.addEventListener('click', async () => {
-                audioChunks = []; // Reset audioChunks
-                await setupRecorder(); // Khởi tạo recorder mới
+                audioChunks = [];
+                accumulatedText = '';
+                resultText.textContent = '';
+                await setupRecorderAndRecognition();
                 if (mediaRecorder) {
                     mediaRecorder.start();
+                    if (realTimeEnabled && recognition) {
+                        recognition.start();
+                    }
                     startBtn.disabled = true;
                     stopBtn.disabled = false;
                     recordingStatus.style.display = 'block';
@@ -361,6 +481,21 @@
             stopBtn.addEventListener('click', () => {
                 if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                     mediaRecorder.stop();
+                }
+                if (realTimeEnabled && recognition) {
+                    recognition.stop();
+                }
+            });
+
+            // Xử lý sự kiện tải audio
+            downloadAudioBtn.addEventListener('click', () => {
+                if (recordedAudioUrl) {
+                    const a = document.createElement('a');
+                    a.href = recordedAudioUrl;
+                    a.download = 'recorded_audio.webm';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
                 }
             });
         }
@@ -375,7 +510,7 @@
                 setTimeout(updateRecordingTime, 1000);
             }
         }
-        // Add function to update video sources
+    
         function updateVideoSources(sessionId) {
             const sourceVideo = document.getElementById('sourceVideo');
             const subtitledVideo = document.getElementById('subtitledVideo');
@@ -383,64 +518,55 @@
             const subtitledVideoSource = document.getElementById('subtitledVideoSource');
             const originalContainer = document.getElementById('originalVideoContainer');
             const subtitledContainer = document.getElementById('subtitledVideoContainer');
-
-            // Update source elements
-            sourceVideoSource.src = `/original_video/${currentSessionId}`;
-            subtitledVideoSource.src = `/download_video/${currentSessionId}`;
-
-            // Load new sources
+    
+            sourceVideoSource.src = `/original_video/${sessionId}`;
+            subtitledVideoSource.src = `/download_video/${sessionId}`;
             sourceVideo.load();
             subtitledVideo.load();
-
-            // Add event listeners for video loading
-            sourceVideo.onloadeddata = function() {
+    
+            sourceVideo.onloadeddata = () => {
                 sourceVideo.classList.add('has-source');
                 originalContainer.classList.remove('empty');
             };
-
-            subtitledVideo.onloadeddata = function() {
+    
+            subtitledVideo.onloadeddata = () => {
                 subtitledVideo.classList.add('has-source');
                 subtitledContainer.classList.remove('empty');
             };
-
-            // Add error handlers
-            sourceVideo.onerror = function() {
+    
+            sourceVideo.onerror = () => {
                 originalContainer.classList.add('empty');
                 sourceVideo.classList.remove('has-source');
             };
-
-            subtitledVideo.onerror = function() {
+    
+            subtitledVideo.onerror = () => {
                 subtitledContainer.classList.add('empty');
                 subtitledVideo.classList.remove('has-source');
             };
         }
-
-        // Reset videos function
+    
         function resetVideos() {
             const sourceVideo = document.getElementById('sourceVideo');
             const subtitledVideo = document.getElementById('subtitledVideo');
             const originalContainer = document.getElementById('originalVideoContainer');
             const subtitledContainer = document.getElementById('subtitledVideoContainer');
-
+    
             sourceVideo.classList.remove('has-source');
             subtitledVideo.classList.remove('has-source');
             originalContainer.classList.add('empty');
             subtitledContainer.classList.add('empty');
         }
-
+    
         function startStatusUpdates(sessionId) {
             currentSessionId = sessionId;
             let reconnectAttempts = 0;
             const maxReconnectAttempts = 3;
-
+    
             function connect() {
-                if (eventSource) {
-                    eventSource.close();
-                }
-
+                if (eventSource) eventSource.close();
                 eventSource = new EventSource(`/status/${sessionId}`);
-                
-                eventSource.onmessage = function(event) {
+    
+                eventSource.onmessage = (event) => {
                     const data = JSON.parse(event.data);
                     const processingStatus = document.getElementById('processingStatus');
                     const statusMessage = document.getElementById('statusMessage');
@@ -448,121 +574,89 @@
                     const resultText = document.getElementById('resultText');
                     const errorDiv = document.getElementById('error');
                     const downloadVideoBtn = document.getElementById('downloadVideoBtn');
-
+    
                     reconnectAttempts = 0;
-                    
                     statusMessage.textContent = data.message;
-
+    
                     if (data.status === 'processing') {
                         processingStatus.style.display = 'block';
                         errorDiv.style.display = 'none';
                         resultDiv.style.display = 'none';
                         downloadVideoBtn.style.display = 'none';
                         resetVideos();
-                    }
-                    else if (data.status === 'completed' && data.text) {
+                    } else if (data.status === 'completed' && data.text) {
                         processingStatus.style.display = 'none';
                         errorDiv.style.display = 'none';
                         resultText.textContent = data.text;
                         resultDiv.style.display = 'block';
-                        
-                        // Set up audio player if file is available
-                        if (uploadedFile) {
-                            setupAudioPlayer(uploadedFile);
-                        }
-                        
+                        if (uploadedFile) setupAudioPlayer(uploadedFile);
                         if (data.has_video) {
                             downloadVideoBtn.style.display = 'inline-block';
                             updateVideoSources(sessionId);
                         }
-                        
-                        if (eventSource) {
-                            eventSource.close();
-                        }
-                    }
-                    else if (data.status === 'error') {
+                        if (eventSource) eventSource.close();
+                    } else if (data.status === 'error') {
                         processingStatus.style.display = 'none';
                         errorDiv.textContent = data.message || 'An error occurred during processing';
                         errorDiv.style.display = 'block';
                         resultDiv.style.display = 'none';
                         downloadVideoBtn.style.display = 'none';
                         resetVideos();
-                        if (eventSource) {
-                            eventSource.close();
-                        }
+                        if (eventSource) eventSource.close();
                     }
                 };
-
-                eventSource.onerror = function() {
+    
+                eventSource.onerror = () => {
                     if (reconnectAttempts < maxReconnectAttempts) {
                         reconnectAttempts++;
                         setTimeout(connect, 1000 * reconnectAttempts);
                     } else {
-                        const errorDiv = document.getElementById('error');
-                        const processingStatus = document.getElementById('processingStatus');
-                        
-                        errorDiv.textContent = 'Lost connection to server. Processing continues, please do not close the page.';
-                        errorDiv.style.display = 'block';
-                        processingStatus.style.display = 'block';
-                        
-                        if (eventSource) {
-                            eventSource.close();
-                        }
+                        document.getElementById('error').textContent = 'Lost connection to server.';
+                        document.getElementById('error').style.display = 'block';
+                        document.getElementById('processingStatus').style.display = 'block';
+                        if (eventSource) eventSource.close();
                     }
                 };
             }
-
+    
             connect();
         }
-
-        // Function to set up audio player with the uploaded file
+    
         function setupAudioPlayer(file) {
-            const audioPlayer = document.getElementById('audioPlayer');
             const audioSource = document.getElementById('audioSource');
-            
-            // Create object URL for the uploaded file
             const objectUrl = URL.createObjectURL(file);
-            
-            // Set as audio source
             audioSource.src = objectUrl;
             audioPlayer.load();
-            
-            // Show audio player controls
             document.querySelector('.audio-player').style.display = 'block';
         }
-
+    
         document.getElementById('audioFileInput').addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
                 uploadedFile = e.target.files[0];
-                document.getElementById('submitBtn').disabled = false;
+                document.getElementById('submitBtn').disabled = realTimeEnabled;
             }
         });
-
+    
         document.getElementById('transcriptionForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+            if (!uploadedFile || realTimeEnabled) return; // Không submit nếu real-time bật
+    
             const formData = new FormData();
-            if (uploadedFile) {
-                formData.append('audio', uploadedFile);
-            } else {
-                return;
-            }
-
+            formData.append('audio', uploadedFile);
             const submitButton = document.getElementById('submitBtn');
-
+    
             document.getElementById('processingStatus').style.display = 'none';
             document.getElementById('error').style.display = 'none';
             document.getElementById('transcriptionResult').style.display = 'none';
             document.getElementById('downloadVideoBtn').style.display = 'none';
             resetVideos();
-
+    
             try {
                 submitButton.disabled = true;
                 const response = await fetch('/transcribe', {
                     method: 'POST',
                     body: formData
                 });
-
                 const data = await response.json();
                 if (data.status === 'error') {
                     document.getElementById('error').textContent = data.message;
@@ -577,23 +671,19 @@
                 submitButton.disabled = false;
             }
         });
-
-        document.addEventListener('DOMContentLoaded', function() {
+    
+        document.addEventListener('DOMContentLoaded', () => {
             initAudioPlayer();
             initRecording();
             document.querySelector('.audio-player').style.display = 'none';
         });
-
+    
         document.getElementById('downloadTextBtn').addEventListener('click', () => {
-            if (currentSessionId) {
-                window.location.href = `/download_text/${currentSessionId}`;
-            }
+            if (currentSessionId) window.location.href = `/download_text/${currentSessionId}`;
         });
-
+    
         document.getElementById('downloadVideoBtn').addEventListener('click', () => {
-            if (currentSessionId) {
-                window.location.href = `/download_video/${currentSessionId}`;
-            }
+            if (currentSessionId) window.location.href = `/download_video/${currentSessionId}`;
         });
     </script>
 </body>

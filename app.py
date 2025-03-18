@@ -160,7 +160,6 @@ def process_video_file(video_path, session_id, status_queue):
     
 def process_audio_file(audio_path, session_id, status_queue):
     try:
-        # Convert to WAV if needed (hỗ trợ thêm webm)
         wav_path = f"uploads/{session_id}_audio.wav"
         status_queue.put({"status": "processing", "message": "Đang xử lý audio..."})
         if audio_path.lower().endswith('.webm'):
@@ -168,26 +167,23 @@ def process_audio_file(audio_path, session_id, status_queue):
         else:
             convert_to_wav(audio_path, wav_path)
 
-        # Use the pipe directly on the entire audio file
         status_queue.put({"status": "processing", "message": "Đang nhận dạng giọng nói..."})
         result = pipe(wav_path, return_timestamps=True)
         
-        # Generate SRT content
         srt_content = generate_srt_improved({
             'chunks': [{'timestamp': chunk['timestamp'], 'text': chunk['text']} 
                       for chunk in result.get('chunks', [])]
         })
         
-        # Save results
         with threading.Lock():
             transcription_results[session_id] = {
                 "text": result.get('text', ''),
                 "srt": srt_content,
                 "video_path": None,
-                "original_video": None
+                "original_video": None,
+                "audio_path": audio_path  # Lưu đường dẫn file âm thanh gốc
             }
 
-        # Cleanup temporary files only
         os.remove(wav_path)
         
         return True
@@ -195,7 +191,6 @@ def process_audio_file(audio_path, session_id, status_queue):
     except Exception as e:
         print(f"Error in audio processing: {str(e)}")
         return False
-
 
 def format_srt_timestamp(seconds):
     """
@@ -323,6 +318,18 @@ def _format_timecode(seconds):
 @app.route('/')
 def index():
     return render_template('2index.html')
+
+@app.route('/download_audio/<session_id>')
+def download_audio(session_id):
+    result = transcription_results.get(session_id)
+    if result and result.get('audio_path'):
+        return send_file(
+            result['audio_path'],
+            mimetype="audio/webm",
+            as_attachment=True,
+            download_name="recorded_audio.webm"
+        )
+    return "No audio file found", 404
 
 @app.route('/original_video/<session_id>')
 def original_video(session_id):
