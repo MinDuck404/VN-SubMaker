@@ -19,14 +19,15 @@ transcription_locks = {}
 
 app = Flask(__name__)
 
-MODEL_PATH = "ASR"
+MODEL_PATH = "suzii/vi-whisper-large-v3-turbo-v1"
+
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
 model = AutoModelForSpeechSeq2Seq.from_pretrained(
     MODEL_PATH, torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True
 )
-model.to(device)
+processor = AutoProcessor.from_pretrained(MODEL_PATH)
 
 processor = AutoProcessor.from_pretrained(MODEL_PATH)
 pipe = pipeline(
@@ -159,14 +160,14 @@ def process_video_file(video_path, session_id, status_queue):
         return False
     
 def process_audio_file(audio_path, session_id, status_queue):
-    """
-    Process audio files using a simplified approach without chunking
-    """
     try:
-        # Convert to WAV if needed (but keep original file)
+        # Convert to WAV if needed (hỗ trợ thêm webm)
         wav_path = f"uploads/{session_id}_audio.wav"
         status_queue.put({"status": "processing", "message": "Đang xử lý audio..."})
-        convert_to_wav(audio_path, wav_path)
+        if audio_path.lower().endswith('.webm'):
+            AudioSegment.from_file(audio_path, format="webm").export(wav_path, format="wav")
+        else:
+            convert_to_wav(audio_path, wav_path)
 
         # Use the pipe directly on the entire audio file
         status_queue.put({"status": "processing", "message": "Đang nhận dạng giọng nói..."})
